@@ -5,22 +5,29 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Boletim UFABC — Calculadora de CR, CA e CP</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,500;0,600;0,700;1,500&family=JetBrains+Mono:wght@400;500;700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<div class="paper">
+<div class="page">
 
   <header class="masthead">
     <div class="masthead-left">
-      <span class="eyebrow">SIGAA · não oficial</span>
+      <div class="mark-row">
+        <svg class="mark" width="34" height="34" viewBox="0 0 40 40" aria-hidden="true">
+          <circle cx="14" cy="14" r="11" fill="var(--green)"/>
+          <circle cx="26" cy="14" r="11" fill="var(--green-mid)"/>
+          <circle cx="20" cy="25" r="11" fill="var(--gold)"/>
+        </svg>
+        <span class="eyebrow">SIGAA · ferramenta não oficial</span>
+      </div>
       <h1>Boletim<span class="dot">.</span></h1>
       <p class="subtitle">Sobe seu histórico, a gente lança as matérias e recalcula CR, CA e CP na hora.</p>
     </div>
-    <div class="seal" id="seal">
-      <span class="seal-value" id="sealCR">—</span>
-      <span class="seal-label">CR atual</span>
+    <div class="mark-cr" id="seal">
+      <span class="mark-cr-value" id="sealCR">—</span>
+      <span class="mark-cr-label">CR atual</span>
     </div>
   </header>
 
@@ -43,9 +50,9 @@
       <p class="field-note">Usado para marcar Obrigatória / Opção Limitada / Livre nas matérias futuras que você simular.</p>
     </div>
     <div class="field">
-      <label for="creditosExigidos">Créditos totais exigidos p/ integralização</label>
-      <input type="number" id="creditosExigidos" placeholder="ex: 200" min="0">
-      <p class="field-note">Some as colunas Obrigatórias + Opção Limitada + Livre + Complementares do seu histórico (em créditos, CH ÷ 12) — usado só para o CP.</p>
+      <label for="creditosExigidos">Créd. totais exigidos p/ integralização</label>
+      <input type="number" id="creditosExigidos" placeholder="preenchido automaticamente ao escolher o curso">
+      <p class="field-note" id="exigidosNote">Preenchido a partir da grade do curso escolhido. Pode editar se souber um valor mais preciso.</p>
     </div>
   </section>
 
@@ -112,7 +119,7 @@
   </div>
 
   <footer class="foot-note">
-    <p>Fórmulas conforme Resolução ConsEPE nº 147/273 da UFABC. CR e CA são calculados 100% a partir do seu histórico — sem depender de grade curricular. CP é aproximado (créditos aprovados ÷ créditos exigidos que você informar). Nada é enviado a servidor nenhum: todo o processamento é local, no seu navegador.</p>
+    <p>Fórmulas conforme Resolução ConsEPE nº 147/273 da UFABC. CR e CA são calculados 100% a partir do seu histórico — sem depender de grade curricular. CP é calculado com a grade do curso escolhido (ou informado manualmente). Nada é enviado a servidor nenhum: todo o processamento é local, no seu navegador.</p>
   </footer>
 
 </div>

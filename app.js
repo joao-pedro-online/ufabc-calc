@@ -155,22 +155,42 @@ function computeCoefs(rows, creditosExigidos) {
    Estado + UI
    ============================================================ */
 
-const state = { rows: [], disciplinas: [], cursos: {}, cursoSelecionado: null };
+const state = { rows: [], disciplinas: [], cursos: {}, requisitos: {}, cursoSelecionado: null, exigidosManual: false };
 
 const el = id => document.getElementById(id);
 
 async function loadCurriculo() {
-  const [d, c] = await Promise.all([
+  const [d, c, req] = await Promise.all([
     fetch('data/disciplinas.json').then(r => r.json()).catch(() => []),
     fetch('data/cursos.json').then(r => r.json()).catch(() => ({})),
+    fetch('data/requisitos.json').then(r => r.json()).catch(() => ({})),
   ]);
   state.disciplinas = d;
   state.cursos = c;
+  state.requisitos = req;
   const sel = el('cursoSelect');
   sel.innerHTML = '<option value="">— nenhum / genérico —</option>' +
     Object.entries(c).sort((a, b) => a[1].localeCompare(b[1]))
       .map(([sigla, nome]) => `<option value="${sigla}">${nome}</option>`).join('');
-  sel.addEventListener('change', () => { state.cursoSelecionado = sel.value || null; render(); });
+  sel.addEventListener('change', () => {
+    state.cursoSelecionado = sel.value || null;
+    aplicarExigidosDoCurso();
+    render();
+  });
+  el('creditosExigidos').addEventListener('focus', () => { state.exigidosManual = true; });
+}
+
+function aplicarExigidosDoCurso() {
+  const req = state.requisitos[state.cursoSelecionado];
+  const input = el('creditosExigidos');
+  const note = el('exigidosNote');
+  if (req && !state.exigidosManual) {
+    const total = req.obr_bct + req.obr_curso + req.ol + req.livre + req.complementares;
+    input.value = total;
+    note.textContent = `Obrigatórias BC&T (${req.obr_bct}) + Obrigatórias do curso (${req.obr_curso}) + OL (${req.ol}) + Livres (${req.livre}) + Complementares (${req.complementares}) = ${total} créditos.`;
+  } else if (!req) {
+    note.textContent = 'Sem grade cadastrada para esse curso — informe manualmente.';
+  }
 }
 
 function categoriaParaCurso(codigo) {
@@ -178,6 +198,13 @@ function categoriaParaCurso(codigo) {
   const disc = state.disciplinas.find(d => d.codigo === codigo);
   if (!disc) return '';
   return disc.cursos[state.cursoSelecionado] || 'LIV';
+}
+
+function creditosObrigatoriosCurso(sigla) {
+  if (!sigla) return null;
+  return state.disciplinas
+    .filter(d => d.cursos[sigla] === 'OBR')
+    .reduce((s, d) => s + d.creditos, 0);
 }
 
 function badge(cat) {
@@ -238,7 +265,7 @@ function updateCoefs() {
   const anyEditada = state.rows.some(r => r.simulado);
   el('crRef').textContent = anyEditada ? 'inclui simulação(ões)' : '';
   el('caRef').textContent = anyEditada ? 'inclui simulação(ões)' : '';
-  el('cpRef').textContent = exigidos ? '' : 'informe os créditos exigidos acima';
+  el('cpRef').textContent = exigidos ? '' : 'escolha um curso ao lado ou informe os créditos exigidos';
 }
 
 /* ---------------- Upload ---------------- */

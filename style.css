@@ -301,6 +301,7 @@ tr.simulated select.conceito-select { border-color: var(--accent); color: var(--
   padding: 20px;
   z-index: 20;
 }
+.sim-picker[hidden] { display: none; }
 .sim-picker-box {
   background: var(--paper);
   border: 2px solid var(--ink);

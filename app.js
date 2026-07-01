@@ -128,7 +128,9 @@ async function parsePdf(file) {
    ============================================================ */
 
 function computeCoefs(rows, creditosExigidos) {
-  const cursadas = rows.filter(r => GRADED_SIT.includes(r.situacao) && r.conceito in PESO);
+  const cursadas = rows.filter(r =>
+    r.conceito in PESO && (GRADED_SIT.includes(r.situacao) || r.situacao === 'MATR')
+  );
 
   let numCR = 0, denCR = 0;
   for (const r of cursadas) { numCR += r.creditos * PESO[r.conceito]; denCR += r.creditos; }
@@ -144,7 +146,10 @@ function computeCoefs(rows, creditosExigidos) {
   const CA = denCA ? numCA / denCA : null;
 
   const aprovados = rows
-    .filter(r => INTEGRALIZA_SIT.includes(r.situacao))
+    .filter(r =>
+      INTEGRALIZA_SIT.includes(r.situacao) ||
+      (r.situacao === 'MATR' && r.conceito in PESO && PESO[r.conceito] > 0)
+    )
     .reduce((s, r) => s + r.creditos, 0);
   const CP = creditosExigidos ? aprovados / creditosExigidos : null;
 
@@ -155,15 +160,15 @@ function computeCoefs(rows, creditosExigidos) {
    Estado + UI
    ============================================================ */
 
-const state = { rows: [], disciplinas: [], cursos: {}, requisitos: {}, cursoSelecionado: null, exigidosManual: false };
+const state = { rows: [], disciplinas: [], cursos: {}, requisitos: {}, cursoSelecionado: null, exigidosManual: false, hideCompleted: true };
 
 const el = id => document.getElementById(id);
 
 async function loadCurriculo() {
   const [d, c, req] = await Promise.all([
-    fetch('data/disciplinas.json').then(r => r.json()).catch(() => []),
-    fetch('data/cursos.json').then(r => r.json()).catch(() => ({})),
-    fetch('data/requisitos.json').then(r => r.json()).catch(() => ({})),
+    fetch('data/disciplinas.json?v=7').then(r => r.json()).catch(() => []),
+    fetch('data/cursos.json?v=7').then(r => r.json()).catch(() => ({})),
+    fetch('data/requisitos.json?v=7').then(r => r.json()).catch(() => ({})),
   ]);
   state.disciplinas = d;
   state.cursos = c;
@@ -177,7 +182,6 @@ async function loadCurriculo() {
     aplicarExigidosDoCurso();
     render();
   });
-  el('creditosExigidos').addEventListener('focus', () => { state.exigidosManual = true; });
 }
 
 function aplicarExigidosDoCurso() {
@@ -207,6 +211,66 @@ function creditosObrigatoriosCurso(sigla) {
     .reduce((s, d) => s + d.creditos, 0);
 }
 
+function categoriaDetalhada(codigo) {
+  const disc = state.disciplinas.find(d => d.codigo === codigo);
+  if (!disc) return 'LIVRE';
+  if (disc.cursos['BC&T'] === 'OBR') return 'OBR_BCT';
+  if (state.cursoSelecionado) {
+    if (disc.cursos[state.cursoSelecionado] === 'OBR') return 'OBR_CURSO';
+    if (disc.cursos[state.cursoSelecionado] === 'OL') return 'OL';
+  }
+  return 'LIVRE';
+}
+
+function computeProgresso() {
+  const k = state.cursoSelecionado;
+  const req = state.requisitos[k];
+  const section = el('progressSection');
+  if (!k || !req) { section.hidden = true; return; }
+  section.hidden = false;
+
+  const completedRows = state.rows.filter(r => INTEGRALIZA_SIT.includes(r.situacao));
+  let credBct = 0, credCurso = 0, credOl = 0, credOutros = 0;
+  for (const r of completedRows) {
+    const cat = categoriaDetalhada(r.codigo);
+    if (cat === 'OBR_BCT') credBct += r.creditos;
+    else if (cat === 'OBR_CURSO') credCurso += r.creditos;
+    else if (cat === 'OL') credOl += r.creditos;
+    else credOutros += r.creditos;
+  }
+  const aprovadosCodigos = new Set(completedRows.map(r => r.codigo));
+  const faltamBct = state.disciplinas.filter(d => d.cursos['BC&T'] === 'OBR' && !aprovadosCodigos.has(d.codigo));
+  const faltamCurso = state.disciplinas.filter(d => d.cursos[k] === 'OBR' && !aprovadosCodigos.has(d.codigo));
+
+  const cards = [
+    { title: 'Obrigatórias BC&T', feito: credBct, total: req.obr_bct, faltam: faltamBct, cls: '' },
+    { title: 'Obrigatórias do curso', feito: credCurso, total: req.obr_curso, faltam: faltamCurso, cls: '' },
+    { title: 'Opção Limitada', feito: credOl, total: req.ol, cls: 'is-ol' },
+    { title: 'Livres', feito: credOutros, total: req.livre, cls: 'is-livre', nota: credOutros > req.livre ? 'inclui créditos ainda não usados em Obrigatória/OL — pode passar de 100%' : '' },
+  ];
+  el('progressGrid').innerHTML = cards.map(c => {
+    const pctReal = c.total ? (c.feito / c.total) * 100 : 0;
+    const pctBar = Math.min(100, pctReal);
+    const faltamHtml = c.faltam ? `
+      <details class="progress-faltam">
+        <summary>${c.faltam.length} matéria(s) obrigatória(s) que faltam</summary>
+        <ul>${c.faltam.map(d => `<li><code>${d.codigo}</code> ${d.nome} (${d.creditos} créd.)</li>`).join('')}</ul>
+      </details>` : '';
+    const notaHtml = c.nota ? `<div class="progress-card-detail">${c.nota}</div>` : '';
+    return `
+      <div class="progress-card ${c.cls}">
+        <div class="progress-card-head">
+          <span class="progress-card-title">${c.title}</span>
+          <span class="progress-card-pct">${pctReal.toFixed(0)}%</span>
+        </div>
+        <div class="progress-bar-track"><div class="progress-bar-fill" style="width:${pctBar}%"></div></div>
+        <div class="progress-card-detail">${c.feito} de ${c.total} créditos</div>
+        ${notaHtml}
+        ${faltamHtml}
+      </div>`;
+  }).join('');
+}
+
 function badge(cat) {
   if (!cat) return '<span class="badge badge-none">—</span>';
   const label = cat === 'OBR' ? 'OBR' : cat === 'OL' ? 'OL' : 'LIV';
@@ -221,7 +285,13 @@ function conceitoOptions(selected) {
 function render() {
   const body = el('subjBody');
   body.innerHTML = '';
+  const completos = new Set(
+    state.rows.filter(r => INTEGRALIZA_SIT.includes(r.situacao)).map(r => r.codigo)
+  );
+  let hiddenN = 0;
   state.rows.forEach((r, i) => {
+    const isCompleted = completos.has(r.codigo) && !r.simulado;
+    if (state.hideCompleted && isCompleted) { hiddenN++; return; }
     const tr = document.createElement('tr');
     if (r.simulado) tr.className = 'simulated';
     const catMostrada = state.cursoSelecionado ? categoriaParaCurso(r.codigo) : r.categoria;
@@ -240,15 +310,18 @@ function render() {
         const field = inputEl.dataset.field;
         state.rows[i][field] = field === 'creditos' ? parseFloat(inputEl.value) || 0 : inputEl.value;
         updateCoefs();
+        computeProgresso();
       });
     });
     tr.querySelector('.row-del').addEventListener('click', () => {
       state.rows.splice(i, 1);
       render();
-      updateCoefs();
     });
     body.appendChild(tr);
   });
+  el('hiddenCount').textContent = hiddenN ? `· ${hiddenN} matéria(s) concluída(s) oculta(s)` : '';
+  el('btnToggleCompleted').textContent = state.hideCompleted ? 'mostrar concluídas' : 'ocultar concluídas';
+  computeProgresso();
   updateCoefs();
 }
 
@@ -315,7 +388,19 @@ function setupUpload() {
 /* ---------------- Ações da tabela ---------------- */
 
 function setupActions() {
-  el('creditosExigidos').addEventListener('input', updateCoefs);
+  el('creditosExigidos').addEventListener('input', () => { state.exigidosManual = true; el('resetExigidos').style.display = 'inline'; updateCoefs(); });
+  el('resetExigidos').addEventListener('click', (e) => {
+    e.preventDefault();
+    state.exigidosManual = false;
+    el('resetExigidos').style.display = 'none';
+    aplicarExigidosDoCurso();
+    updateCoefs();
+  });
+
+  el('btnToggleCompleted').addEventListener('click', () => {
+    state.hideCompleted = !state.hideCompleted;
+    render();
+  });
 
   el('btnAddRow').addEventListener('click', () => {
     state.rows.push({

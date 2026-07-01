@@ -38,9 +38,15 @@ nada é enviado a nenhum servidor.
   histórico, mas grades curriculares mudam de versão em versão — puxar isso automaticamente
   arriscaria dar um número errado. Fica mais seguro (e mais simples) você conferir o número
   no seu próprio histórico.
-- **Simulação de matérias futuras**: usa uma base com ~1300 disciplinas da UFABC e suas
-  categorias (Obrigatória / Opção Limitada / Livre) por curso, extraída da sua planilha
-  `Dados_UFABC.xlsx`.
+- **Simulação de matérias futuras**: usa uma base com ~1440 disciplinas da UFABC e suas
+  categorias (Obrigatória / Opção Limitada / Livre) por curso, extraída do catálogo oficial
+  exportado do site da UFABC (`catalogo_disciplinas_graduacao_categorias_2024_2025.xlsx`).
+  **Ressalva:** esse catálogo reflete o currículo vigente em 2024/2025. A UFABC reforma
+  grades de tempos em tempos — quem entrou em anos anteriores pode ter 1-2 disciplinas
+  classificadas diferente do currículo que efetivamente vale pro seu registro (ex:
+  disciplinas que eram Obrigatórias e passaram a ser Opção Limitada, ou vice-versa). Para
+  a maioria dos cursos isso afeta poucos créditos; o CR e o CA nunca são afetados por isso,
+  só a categorização OBR/OL/Livre usada no CP e na simulação.
 
 ## Estrutura
 

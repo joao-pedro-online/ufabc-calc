@@ -1,0 +1,346 @@
+/* ============================================================
+   Boletim UFABC — parsing do histórico + cálculo de CR/CA/CP
+   ============================================================ */
+
+pdfjsLib.GlobalWorkerOptions.workerSrc =
+  'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+const PESO = { A: 4, B: 3, C: 2, D: 1, F: 0, O: 0 };
+const GRADED_SIT = ['APR', 'APRN', 'REP', 'REPF', 'REPMF', 'REPN', 'REPNF'];
+const INTEGRALIZA_SIT = ['APR', 'APRN', 'DISP', 'TRANS', 'INCORP', 'CUMP'];
+const SITUACAO_LIST = ['APRN','REPMF','REPNF','REPF','REPN','APR','REP','CANC','DISP','MATR','TRANC','TRANS','INCORP','CUMP','REC'];
+
+const COLS = [
+  { key: 'periodo',    x0: 0,   x1: 75  },
+  { key: 'categoria',  x0: 75,  x1: 96  },
+  { key: 'codigo',     x0: 96,  x1: 128 },
+  { key: 'componente', x0: 128, x1: 292 },
+  { key: 'creditos',   x0: 292, x1: 316 },
+  { key: 'ch',         x0: 316, x1: 336 },
+  { key: 'chext',      x0: 336, x1: 356 },
+  { key: 'turma',      x0: 356, x1: 388 },
+  { key: 'conceito',   x0: 388, x1: 421 },
+  { key: 'situacao',   x0: 421, x1: 461 },
+  { key: 'docente',    x0: 461, x1: 9999 },
+];
+const PERIODO_RE = /^\d{4}\.\d$|^--$/;
+const CODIGO_RE = /^[A-Z]{2,6}\d{3,4}-\d{2}$/;
+
+function colFor(x) {
+  for (const c of COLS) if (x >= c.x0 && x < c.x1) return c.key;
+  return 'docente';
+}
+function emptyRow() {
+  const r = {};
+  for (const c of COLS) r[c.key] = '';
+  return r;
+}
+function appendCell(row, key, text) {
+  const noSpace = key === 'codigo' || key === 'turma';
+  if (!row[key]) { row[key] = text; return; }
+  row[key] += (noSpace ? '' : ' ') + text;
+}
+
+async function extractRawRows(pdf) {
+  const rows = [];
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    const items = content.items
+      .map(it => ({ x: it.transform[4], y: it.transform[5], str: it.str }))
+      .filter(it => it.str.trim() !== '');
+    items.sort((a, b) => b.y - a.y);
+
+    const lines = [];
+    let cur = null;
+    for (const it of items) {
+      if (!cur || Math.abs(it.y - cur.y) > 2) { cur = { y: it.y, items: [] }; lines.push(cur); }
+      cur.items.push(it);
+    }
+    for (const line of lines) line.items.sort((a, b) => a.x - b.x);
+
+    const centers = [];
+    for (const line of lines) {
+      const periodoItem = line.items.find(it => colFor(it.x) === 'periodo');
+      if (periodoItem && PERIODO_RE.test(periodoItem.str.trim())) {
+        centers.push({ y: line.y, periodo: periodoItem.str.trim() });
+      }
+    }
+    if (centers.length === 0) continue;
+
+    const gaps = [];
+    for (let i = 1; i < centers.length; i++) gaps.push(centers[i - 1].y - centers[i].y);
+    const avgGap = gaps.length ? gaps.reduce((a, b) => a + b, 0) / gaps.length : 30;
+    const upperLimit = centers[0].y + avgGap / 2;
+    const lowerLimit = centers[centers.length - 1].y - avgGap / 2;
+
+    const boundaries = [];
+    for (let i = 0; i < centers.length - 1; i++) boundaries.push((centers[i].y + centers[i + 1].y) / 2);
+
+    const pageRows = centers.map(c => ({ row: emptyRow() }));
+    pageRows.forEach((pr, i) => { pr.row.periodo = centers[i].periodo; });
+
+    for (const line of lines) {
+      if (line.y > upperLimit || line.y < lowerLimit) continue;
+      let idx = 0;
+      for (let i = 0; i < boundaries.length; i++) { if (line.y < boundaries[i]) idx = i + 1; else break; }
+      const target = pageRows[idx].row;
+      for (const it of line.items) {
+        const key = colFor(it.x);
+        if (key === 'periodo') continue;
+        appendCell(target, key, it.str.trim());
+      }
+    }
+    for (const pr of pageRows) rows.push(pr.row);
+  }
+  return rows;
+}
+
+function cleanRows(rawRows) {
+  return rawRows
+    .map(r => {
+      const catMatch = r.categoria.match(/\b(OBR|OL|LIV)\b/);
+      const sitRe = new RegExp('\\b(' + SITUACAO_LIST.join('|') + ')\\b');
+      const sitMatch = r.situacao.match(sitRe);
+      return {
+        periodo: r.periodo,
+        categoria: catMatch ? catMatch[1] : '',
+        codigo: r.codigo.trim(),
+        componente: r.componente.replace(/\s+/g, ' ').trim(),
+        creditos: parseFloat(r.creditos) || 0,
+        conceito: r.conceito.trim().replace(/^-+$/, '-'),
+        situacao: sitMatch ? sitMatch[1] : r.situacao.trim(),
+        simulado: false,
+      };
+    })
+    .filter(r => CODIGO_RE.test(r.codigo) && r.componente && !isNaN(r.creditos));
+}
+
+async function parsePdf(file) {
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
+  const raw = await extractRawRows(pdf);
+  return cleanRows(raw);
+}
+
+/* ============================================================
+   Cálculo de coeficientes
+   ============================================================ */
+
+function computeCoefs(rows, creditosExigidos) {
+  const cursadas = rows.filter(r => GRADED_SIT.includes(r.situacao) && r.conceito in PESO);
+
+  let numCR = 0, denCR = 0;
+  for (const r of cursadas) { numCR += r.creditos * PESO[r.conceito]; denCR += r.creditos; }
+  const CR = denCR ? numCR / denCR : null;
+
+  const bestByCodigo = {};
+  for (const r of cursadas) {
+    const cur = bestByCodigo[r.codigo];
+    if (!cur || PESO[r.conceito] > PESO[cur.conceito]) bestByCodigo[r.codigo] = r;
+  }
+  let numCA = 0, denCA = 0;
+  for (const k in bestByCodigo) { const r = bestByCodigo[k]; numCA += r.creditos * PESO[r.conceito]; denCA += r.creditos; }
+  const CA = denCA ? numCA / denCA : null;
+
+  const aprovados = rows
+    .filter(r => INTEGRALIZA_SIT.includes(r.situacao))
+    .reduce((s, r) => s + r.creditos, 0);
+  const CP = creditosExigidos ? aprovados / creditosExigidos : null;
+
+  return { CR, CA, CP, denCR, aprovados };
+}
+
+/* ============================================================
+   Estado + UI
+   ============================================================ */
+
+const state = { rows: [], disciplinas: [], cursos: {}, cursoSelecionado: null };
+
+const el = id => document.getElementById(id);
+
+async function loadCurriculo() {
+  const [d, c] = await Promise.all([
+    fetch('data/disciplinas.json').then(r => r.json()).catch(() => []),
+    fetch('data/cursos.json').then(r => r.json()).catch(() => ({})),
+  ]);
+  state.disciplinas = d;
+  state.cursos = c;
+  const sel = el('cursoSelect');
+  sel.innerHTML = '<option value="">— nenhum / genérico —</option>' +
+    Object.entries(c).sort((a, b) => a[1].localeCompare(b[1]))
+      .map(([sigla, nome]) => `<option value="${sigla}">${nome}</option>`).join('');
+  sel.addEventListener('change', () => { state.cursoSelecionado = sel.value || null; render(); });
+}
+
+function categoriaParaCurso(codigo) {
+  if (!state.cursoSelecionado) return '';
+  const disc = state.disciplinas.find(d => d.codigo === codigo);
+  if (!disc) return '';
+  return disc.cursos[state.cursoSelecionado] || 'LIV';
+}
+
+function badge(cat) {
+  if (!cat) return '<span class="badge badge-none">—</span>';
+  const label = cat === 'OBR' ? 'OBR' : cat === 'OL' ? 'OL' : 'LIV';
+  return `<span class="badge badge-${label}">${label}</span>`;
+}
+
+function conceitoOptions(selected) {
+  return ['-', 'A', 'B', 'C', 'D', 'F', 'O'].map(v =>
+    `<option value="${v}" ${v === selected ? 'selected' : ''}>${v}</option>`).join('');
+}
+
+function render() {
+  const body = el('subjBody');
+  body.innerHTML = '';
+  state.rows.forEach((r, i) => {
+    const tr = document.createElement('tr');
+    if (r.simulado) tr.className = 'simulated';
+    const catMostrada = state.cursoSelecionado ? categoriaParaCurso(r.codigo) : r.categoria;
+    tr.innerHTML = `
+      <td class="periodo">${r.periodo}</td>
+      <td>${badge(catMostrada)}</td>
+      <td class="codigo">${r.codigo}</td>
+      <td><input type="text" data-field="componente" value="${r.componente.replace(/"/g, '&quot;')}"></td>
+      <td style="width:56px"><input type="number" data-field="creditos" value="${r.creditos}" min="0" style="width:48px"></td>
+      <td><select class="conceito-select" data-field="conceito">${conceitoOptions(r.conceito)}</select></td>
+      <td><input type="text" data-field="situacao" value="${r.situacao}" style="width:70px"></td>
+      <td><button class="row-del" title="Remover">✕</button></td>
+    `;
+    tr.querySelectorAll('[data-field]').forEach(inputEl => {
+      inputEl.addEventListener('input', () => {
+        const field = inputEl.dataset.field;
+        state.rows[i][field] = field === 'creditos' ? parseFloat(inputEl.value) || 0 : inputEl.value;
+        updateCoefs();
+      });
+    });
+    tr.querySelector('.row-del').addEventListener('click', () => {
+      state.rows.splice(i, 1);
+      render();
+      updateCoefs();
+    });
+    body.appendChild(tr);
+  });
+  updateCoefs();
+}
+
+function fmt(v) { return v === null || v === undefined || isNaN(v) ? '—' : v.toFixed(4); }
+
+function updateCoefs() {
+  const exigidos = parseFloat(el('creditosExigidos').value) || null;
+  const { CR, CA, CP, denCR } = computeCoefs(state.rows, exigidos);
+  el('crValue').textContent = fmt(CR);
+  el('caValue').textContent = fmt(CA);
+  el('cpValue').textContent = CP === null ? '—' : CP.toFixed(4);
+  el('credCursados').textContent = denCR;
+  el('sealCR').textContent = CR === null ? '—' : CR.toFixed(2);
+  const anyEditada = state.rows.some(r => r.simulado);
+  el('crRef').textContent = anyEditada ? 'inclui simulação(ões)' : '';
+  el('caRef').textContent = anyEditada ? 'inclui simulação(ões)' : '';
+  el('cpRef').textContent = exigidos ? '' : 'informe os créditos exigidos acima';
+}
+
+/* ---------------- Upload ---------------- */
+
+function setStatus(msg, kind) {
+  const s = el('uploadStatus');
+  s.textContent = msg;
+  s.className = 'status' + (kind ? ' ' + kind : '');
+}
+
+async function handleFile(file) {
+  if (!file || file.type !== 'application/pdf') {
+    setStatus('Por favor, envie um arquivo PDF do histórico escolar.', 'error');
+    return;
+  }
+  setStatus('Lendo o histórico…');
+  try {
+    const rows = await parsePdf(file);
+    if (rows.length === 0) {
+      setStatus('Não consegui identificar matérias nesse PDF. Confira se é o Histórico Escolar exportado do SIGAA.', 'error');
+      return;
+    }
+    state.rows = rows;
+    setStatus(`${rows.length} componentes carregados com sucesso.`, 'ok');
+    el('controls').hidden = false;
+    el('coefGrid').hidden = false;
+    el('tableSection').hidden = false;
+    render();
+  } catch (e) {
+    console.error(e);
+    setStatus('Erro ao processar o PDF: ' + e.message, 'error');
+  }
+}
+
+function setupUpload() {
+  const zone = el('uploadZone');
+  const input = el('fileInput');
+  zone.addEventListener('click', () => input.click());
+  input.addEventListener('change', () => handleFile(input.files[0]));
+  ['dragenter', 'dragover'].forEach(evt =>
+    zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.add('dragover'); }));
+  ['dragleave', 'drop'].forEach(evt =>
+    zone.addEventListener(evt, e => { e.preventDefault(); zone.classList.remove('dragover'); }));
+  zone.addEventListener('drop', e => handleFile(e.dataTransfer.files[0]));
+}
+
+/* ---------------- Ações da tabela ---------------- */
+
+function setupActions() {
+  el('creditosExigidos').addEventListener('input', updateCoefs);
+
+  el('btnAddRow').addEventListener('click', () => {
+    state.rows.push({
+      periodo: '', categoria: '', codigo: '', componente: 'Nova matéria',
+      creditos: 4, conceito: '-', situacao: 'MATR', simulado: true,
+    });
+    render();
+  });
+
+  el('btnAddSim').addEventListener('click', () => openSimPicker());
+  el('simClose').addEventListener('click', () => { el('simPicker').hidden = true; });
+
+  const searchInput = el('simSearch');
+  searchInput.addEventListener('input', () => renderSimResults(searchInput.value));
+}
+
+function openSimPicker() {
+  el('simPicker').hidden = false;
+  el('simSearch').value = '';
+  el('simSearch').focus();
+  renderSimResults('');
+}
+
+function renderSimResults(query) {
+  const q = query.trim().toLowerCase();
+  const list = state.disciplinas
+    .filter(d => !q || d.nome.toLowerCase().includes(q) || d.codigo.toLowerCase().includes(q))
+    .slice(0, 60);
+  const box = el('simResults');
+  box.innerHTML = list.map(d =>
+    `<div class="sim-result-item" data-codigo="${d.codigo}">
+       <div>${d.nome}</div>
+       <div class="rn">${d.codigo} · ${d.creditos} créd.</div>
+     </div>`).join('') || '<p style="padding:10px;color:var(--ink-soft)">Nenhuma disciplina encontrada.</p>';
+  box.querySelectorAll('.sim-result-item').forEach(itEl => {
+    itEl.addEventListener('click', () => {
+      const disc = state.disciplinas.find(d => d.codigo === itEl.dataset.codigo);
+      state.rows.push({
+        periodo: 'futuro', categoria: disc.cursos[state.cursoSelecionado] || '',
+        codigo: disc.codigo, componente: disc.nome, creditos: disc.creditos,
+        conceito: 'A', situacao: 'MATR', simulado: true,
+      });
+      el('simPicker').hidden = true;
+      render();
+    });
+  });
+}
+
+/* ---------------- Init ---------------- */
+
+(async function init() {
+  setupUpload();
+  setupActions();
+  await loadCurriculo();
+})();

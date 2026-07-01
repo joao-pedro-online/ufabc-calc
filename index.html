@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Boletim UFABC — Calculadora de CR, CA e CP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,500;0,600;0,700;1,500&family=JetBrains+Mono:wght@400;500;700&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="paper">
+
+  <header class="masthead">
+    <div class="masthead-left">
+      <span class="eyebrow">SIGAA · não oficial</span>
+      <h1>Boletim<span class="dot">.</span></h1>
+      <p class="subtitle">Sobe seu histórico, a gente lança as matérias e recalcula CR, CA e CP na hora.</p>
+    </div>
+    <div class="seal" id="seal">
+      <span class="seal-value" id="sealCR">—</span>
+      <span class="seal-label">CR atual</span>
+    </div>
+  </header>
+
+  <section class="upload-zone" id="uploadZone">
+    <input type="file" id="fileInput" accept="application/pdf" hidden>
+    <div class="upload-inner" id="uploadInner">
+      <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+        <path d="M12 3v12m0-12 4 4m-4-4-4 4M5 21h14" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <p><strong>Solte o histórico escolar (PDF)</strong> aqui ou clique para escolher</p>
+      <p class="hint">Exportado do SIGAA em PDF · Central de Atendimento ao Estudante → Documentos → Histórico Escolar</p>
+    </div>
+    <p class="status" id="uploadStatus"></p>
+  </section>
+
+  <section class="controls" id="controls" hidden>
+    <div class="field">
+      <label for="cursoSelect">Curso para simulação</label>
+      <select id="cursoSelect"></select>
+      <p class="field-note">Usado para marcar Obrigatória / Opção Limitada / Livre nas matérias futuras que você simular.</p>
+    </div>
+    <div class="field">
+      <label for="creditosExigidos">Créditos totais exigidos p/ integralização</label>
+      <input type="number" id="creditosExigidos" placeholder="ex: 200" min="0">
+      <p class="field-note">Some as colunas Obrigatórias + Opção Limitada + Livre + Complementares do seu histórico (em créditos, CH ÷ 12) — usado só para o CP.</p>
+    </div>
+  </section>
+
+  <section class="coef-grid" id="coefGrid" hidden>
+    <div class="coef-card">
+      <span class="coef-label">CR — Rendimento</span>
+      <span class="coef-value" id="crValue">—</span>
+      <span class="coef-ref" id="crRef"></span>
+    </div>
+    <div class="coef-card">
+      <span class="coef-label">CA — Aproveitamento</span>
+      <span class="coef-value" id="caValue">—</span>
+      <span class="coef-ref" id="caRef"></span>
+    </div>
+    <div class="coef-card">
+      <span class="coef-label">CP — Progressão <em>(aprox.)</em></span>
+      <span class="coef-value" id="cpValue">—</span>
+      <span class="coef-ref" id="cpRef"></span>
+    </div>
+    <div class="coef-card muted">
+      <span class="coef-label">Créditos cursados</span>
+      <span class="coef-value" id="credCursados">—</span>
+      <span class="coef-ref">soma de todos os créditos usados no CR</span>
+    </div>
+  </section>
+
+  <section class="table-section" id="tableSection" hidden>
+    <div class="table-head-row">
+      <h2>Componentes curriculares</h2>
+      <div class="table-actions">
+        <button class="btn-ghost" id="btnAddRow">+ matéria manual</button>
+        <button class="btn-ghost" id="btnAddSim">+ simular matéria futura</button>
+      </div>
+    </div>
+    <p class="table-legend">
+      Conceitos em vermelho são <strong>simulados</strong> — edite para projetar seu CR/CA. Situação <code>MATR</code> = matriculado (sem conceito ainda).
+    </p>
+    <div class="table-wrap">
+      <table id="subjTable">
+        <thead>
+          <tr>
+            <th>Período</th>
+            <th>Categoria</th>
+            <th>Código</th>
+            <th>Componente</th>
+            <th>Créd.</th>
+            <th>Conceito</th>
+            <th>Situação</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="subjBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <div class="sim-picker" id="simPicker" hidden>
+    <div class="sim-picker-box">
+      <h3>Simular matéria futura</h3>
+      <input type="text" id="simSearch" placeholder="Buscar disciplina por nome ou código…">
+      <div class="sim-results" id="simResults"></div>
+      <button class="btn-ghost" id="simClose">Fechar</button>
+    </div>
+  </div>
+
+  <footer class="foot-note">
+    <p>Fórmulas conforme Resolução ConsEPE nº 147/273 da UFABC. CR e CA são calculados 100% a partir do seu histórico — sem depender de grade curricular. CP é aproximado (créditos aprovados ÷ créditos exigidos que você informar). Nada é enviado a servidor nenhum: todo o processamento é local, no seu navegador.</p>
+  </footer>
+
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

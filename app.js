@@ -116,11 +116,34 @@ function cleanRows(rawRows) {
     .filter(r => CODIGO_RE.test(r.codigo) && r.componente && !isNaN(r.creditos));
 }
 
+function baseCodigo(codigo) {
+  return (codigo || '').replace(/-\d{2}$/, '');
+}
+
+async function extractConvalidacoes(pdf) {
+  const map = {};
+  const re = /Cumpriu\s+([A-Z]+\d+-\d{2})\s*-\s*[^(]+\((\d+)h\)\s*através de\s+([A-Z]+\d+-\d{2})\s*-\s*[^(]+\((\d+)h\)/g;
+  for (let p = 1; p <= pdf.numPages; p++) {
+    const page = await pdf.getPage(p);
+    const content = await page.getTextContent();
+    const items = content.items.map(it => ({ x: it.transform[4], y: it.transform[5], str: it.str }));
+    items.sort((a, b) => b.y - a.y || a.x - b.x);
+    const text = items.map(i => i.str).join(' ');
+    let m;
+    while ((m = re.exec(text)) !== null) {
+      map[m[1]] = m[3]; // requiredCode -> codeActuallyTaken
+    }
+  }
+  return map;
+}
+
 async function parsePdf(file) {
   const buf = await file.arrayBuffer();
   const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
   const raw = await extractRawRows(pdf);
-  return cleanRows(raw);
+  const rows = cleanRows(raw);
+  const convalidacoes = await extractConvalidacoes(pdf);
+  return { rows, convalidacoes };
 }
 
 /* ============================================================
@@ -181,15 +204,15 @@ function computeCoefs(rows, creditosExigidos) {
    Estado + UI
    ============================================================ */
 
-const state = { rows: [], disciplinas: [], cursos: {}, requisitos: {}, cursoSelecionado: null, exigidosManual: false, hideCompleted: true };
+const state = { rows: [], disciplinas: [], cursos: {}, requisitos: {}, cursoSelecionado: null, exigidosManual: false, hideCompleted: true, convalidacoes: {} };
 
 const el = id => document.getElementById(id);
 
 async function loadCurriculo() {
   const [d, c, req] = await Promise.all([
-    fetch('data/disciplinas.json?v=10').then(r => r.json()).catch(() => []),
-    fetch('data/cursos.json?v=10').then(r => r.json()).catch(() => ({})),
-    fetch('data/requisitos.json?v=10').then(r => r.json()).catch(() => ({})),
+    fetch('data/disciplinas.json?v=11').then(r => r.json()).catch(() => []),
+    fetch('data/cursos.json?v=11').then(r => r.json()).catch(() => ({})),
+    fetch('data/requisitos.json?v=11').then(r => r.json()).catch(() => ({})),
   ]);
   state.disciplinas = d;
   state.cursos = c;
@@ -287,8 +310,17 @@ function computeProgresso() {
     else credOutros += r.creditos;
   }
   const aprovadosCodigos = new Set(completedRows.map(r => r.codigo));
-  const faltamBase = state.disciplinas.filter(d => d.cursos[base] === 'OBR' && !aprovadosCodigos.has(d.codigo));
-  const faltamCurso = state.disciplinas.filter(d => d.cursos[k] === 'OBR' && !aprovadosCodigos.has(d.codigo));
+  const aprovadosBase = new Set([...aprovadosCodigos].map(baseCodigo));
+  // aplica convalidações explícitas do histórico (ex: código trocado por outro totalmente diferente)
+  for (const [codigoExigido, codigoCumprido] of Object.entries(state.convalidacoes)) {
+    if (aprovadosCodigos.has(codigoCumprido) || aprovadosBase.has(baseCodigo(codigoCumprido))) {
+      aprovadosCodigos.add(codigoExigido);
+      aprovadosBase.add(baseCodigo(codigoExigido));
+    }
+  }
+  const feito = codigo => aprovadosCodigos.has(codigo) || aprovadosBase.has(baseCodigo(codigo));
+  const faltamBase = state.disciplinas.filter(d => d.cursos[base] === 'OBR' && !feito(d.codigo));
+  const faltamCurso = state.disciplinas.filter(d => d.cursos[k] === 'OBR' && !feito(d.codigo));
 
   const cards = [
     { title: `Obrigatórias ${base}`, feito: credBase, total: req ? req.obr_bct : auto.obr_base, faltam: faltamBase, cls: '' },
@@ -420,13 +452,15 @@ async function handleFile(file) {
   }
   setStatus('Lendo o histórico…');
   try {
-    const rows = await parsePdf(file);
+    const { rows, convalidacoes } = await parsePdf(file);
     if (rows.length === 0) {
       setStatus('Não consegui identificar matérias nesse PDF. Confira se é o Histórico Escolar exportado do SIGAA.', 'error');
       return;
     }
     state.rows = rows;
-    setStatus(`${rows.length} componentes carregados com sucesso.`, 'ok');
+    state.convalidacoes = convalidacoes;
+    const nConv = Object.keys(convalidacoes).length;
+    setStatus(`${rows.length} componentes carregados com sucesso.` + (nConv ? ` (${nConv} convalidação(ões) detectada(s))` : ''), 'ok');
     el('controls').hidden = false;
     el('coefGrid').hidden = false;
     el('tableSection').hidden = false;

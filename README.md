@@ -33,11 +33,11 @@ nada é enviado a nenhum servidor.
   cursados — conforme Resolução ConsEPE nº 147/273.
 - **CA (Coeficiente de Aproveitamento)**: igual ao CR, mas se você refez uma matéria, só o
   melhor conceito conta.
-- **CP (Coeficiente de Progressão)**: créditos aprovados ÷ créditos exigidos para
-  integralização. Aqui o site pede um número manual, porque o SIGAA imprime esse total no
-  histórico, mas grades curriculares mudam de versão em versão — puxar isso automaticamente
-  arriscaria dar um número errado. Fica mais seguro (e mais simples) você conferir o número
-  no seu próprio histórico.
+- **CP/CPk (Coeficiente de Progressão)**: usa a fórmula oficial exata do Ato Decisório
+  ConsEPE (confirmada em Projetos Pedagógicos de Curso — PPC): `CPk = [n_obr + min(N_lim +
+  N_livre, n_lim + min(n_livre, N_livre))] / NC_k`. Essa fórmula trava o excedente de
+  créditos "livres" no limite exigido, em vez de deixá-lo inflar o coeficiente
+  indefinidamente — uma correção feita depois de comparar com o texto oficial.
 - **Simulação de matérias futuras**: usa uma base com ~1440 disciplinas da UFABC e suas
   categorias (Obrigatória / Opção Limitada / Livre) por curso, extraída do catálogo oficial
   exportado do site da UFABC (`catalogo_disciplinas_graduacao_categorias_2024_2025.xlsx`).
@@ -75,3 +75,9 @@ Não precisa de build, backend, nem chave de API — é só HTML/CSS/JS estátic
   conceito — elas não entram no CR/CA (correto), mas talvez precisem entrar manualmente no
   cálculo do CP se contarem como aprovadas.
 - O CP é aproximado por design (veja acima).
+- Para cursos sem cota completa cadastrada (fora dos 21 já mapeados a partir de Projetos
+  Pedagógicos oficiais), as Obrigatórias são somadas automaticamente a partir do catálogo —
+  funciona bem pra a maioria, mas Licenciaturas com Estágio Supervisionado têm componentes
+  de crédito muito alto (até 80 créditos cada) que podem inflar a soma. É dado real da
+  UFABC, não um bug, mas vale conferir manualmente se o curso escolhido tiver estágio na
+  lista de Obrigatórias.

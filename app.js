@@ -127,6 +127,27 @@ async function parsePdf(file) {
    Cálculo de coeficientes
    ============================================================ */
 
+function computeCPkOficial(rows, k, req) {
+  const aprovadas = rows.filter(r =>
+    r.conceito in PESO && PESO[r.conceito] > 0 &&
+    (INTEGRALIZA_SIT.includes(r.situacao) || r.situacao === 'MATR')
+  );
+  let n_obr = 0, n_lim = 0, n_livre = 0;
+  for (const r of aprovadas) {
+    const cat = categoriaDetalhada(r.codigo, k);
+    if (cat === 'OBR_BASE' || cat === 'OBR_CURSO') n_obr += r.creditos;
+    else if (cat === 'OL') n_lim += r.creditos;
+    else n_livre += r.creditos;
+  }
+  const N_obr = req.obr_bct + req.obr_curso;
+  const N_lim = req.ol;
+  const N_livre = req.livre;
+  const NC = N_obr + N_lim + N_livre;
+  if (!NC) return null;
+  const limPlusLivre = Math.min(N_lim + N_livre, n_lim + Math.min(n_livre, N_livre));
+  return { CPk: (n_obr + limPlusLivre) / NC, n_obr, n_lim, n_livre, N_obr, N_lim, N_livre };
+}
+
 function computeCoefs(rows, creditosExigidos) {
   const cursadas = rows.filter(r =>
     r.conceito in PESO && (GRADED_SIT.includes(r.situacao) || r.situacao === 'MATR')
@@ -166,9 +187,9 @@ const el = id => document.getElementById(id);
 
 async function loadCurriculo() {
   const [d, c, req] = await Promise.all([
-    fetch('data/disciplinas.json?v=7').then(r => r.json()).catch(() => []),
-    fetch('data/cursos.json?v=7').then(r => r.json()).catch(() => ({})),
-    fetch('data/requisitos.json?v=7').then(r => r.json()).catch(() => ({})),
+    fetch('data/disciplinas.json?v=10').then(r => r.json()).catch(() => []),
+    fetch('data/cursos.json?v=10').then(r => r.json()).catch(() => ({})),
+    fetch('data/requisitos.json?v=10').then(r => r.json()).catch(() => ({})),
   ]);
   state.disciplinas = d;
   state.cursos = c;
@@ -188,12 +209,20 @@ function aplicarExigidosDoCurso() {
   const req = state.requisitos[state.cursoSelecionado];
   const input = el('creditosExigidos');
   const note = el('exigidosNote');
+  if (!state.cursoSelecionado) return;
   if (req && !state.exigidosManual) {
     const total = req.obr_bct + req.obr_curso + req.ol + req.livre + req.complementares;
+    const baseNome = baseInterdisciplinar(state.cursoSelecionado);
     input.value = total;
-    note.textContent = `Obrigatórias BC&T (${req.obr_bct}) + Obrigatórias do curso (${req.obr_curso}) + OL (${req.ol}) + Livres (${req.livre}) + Complementares (${req.complementares}) = ${total} créditos.`;
-  } else if (!req) {
-    note.textContent = 'Sem grade cadastrada para esse curso — informe manualmente.';
+    note.textContent = `Obrigatórias ${baseNome} (${req.obr_bct}) + Obrigatórias do curso (${req.obr_curso}) + OL (${req.ol}) + Livres (${req.livre}) + Complementares (${req.complementares}) = ${total} créditos.`;
+    return;
+  }
+  if (!req) {
+    const auto = creditosObrigatoriosAuto(state.cursoSelecionado);
+    if (!state.exigidosManual) {
+      input.value = auto.obr_base + auto.obr_curso;
+      note.innerHTML = `Não tenho a cota completa (OL/Livre/Complementares) pra esse curso — preenchi só as Obrigatórias, calculadas automaticamente: ${auto.base} (${auto.obr_base}) + curso (${auto.obr_curso}) = ${auto.obr_base + auto.obr_curso} créditos. <strong>Some manualmente</strong> os créditos de OL + Livre + Complementares do seu curso e edite o campo pra ficar exato.`;
+    }
   }
 }
 
@@ -204,50 +233,71 @@ function categoriaParaCurso(codigo) {
   return disc.cursos[state.cursoSelecionado] || 'LIV';
 }
 
-function creditosObrigatoriosCurso(sigla) {
-  if (!sigla) return null;
-  return state.disciplinas
-    .filter(d => d.cursos[sigla] === 'OBR')
-    .reduce((s, d) => s + d.creditos, 0);
+function baseInterdisciplinar(sigla) {
+  let bctCount = 0, bchCount = 0;
+  for (const d of state.disciplinas) {
+    if (d.cursos[sigla] === 'OBR') {
+      if (d.cursos['BC&T']) bctCount++;
+      if (d.cursos['BC&H']) bchCount++;
+    }
+  }
+  return bchCount > bctCount ? 'BC&H' : 'BC&T';
 }
 
-function categoriaDetalhada(codigo) {
+function creditosObrigatoriosAuto(sigla) {
+  if (!sigla) return null;
+  const base = baseInterdisciplinar(sigla);
+  let baseCred = 0, curso = 0;
+  for (const d of state.disciplinas) {
+    if (d.cursos[base] === 'OBR') baseCred += d.creditos;
+    else if (d.cursos[sigla] === 'OBR') curso += d.creditos;
+  }
+  return { base, obr_base: baseCred, obr_curso: curso };
+}
+
+function categoriaDetalhada(codigo, cursoOverride) {
+  const curso = cursoOverride !== undefined ? cursoOverride : state.cursoSelecionado;
   const disc = state.disciplinas.find(d => d.codigo === codigo);
   if (!disc) return 'LIVRE';
-  if (disc.cursos['BC&T'] === 'OBR') return 'OBR_BCT';
-  if (state.cursoSelecionado) {
-    if (disc.cursos[state.cursoSelecionado] === 'OBR') return 'OBR_CURSO';
-    if (disc.cursos[state.cursoSelecionado] === 'OL') return 'OL';
+  const base = curso ? baseInterdisciplinar(curso) : 'BC&T';
+  if (disc.cursos[base] === 'OBR') return 'OBR_BASE';
+  if (curso) {
+    if (disc.cursos[curso] === 'OBR') return 'OBR_CURSO';
+    if (disc.cursos[curso] === 'OL') return 'OL';
   }
   return 'LIVRE';
 }
 
 function computeProgresso() {
   const k = state.cursoSelecionado;
-  const req = state.requisitos[k];
   const section = el('progressSection');
-  if (!k || !req) { section.hidden = true; return; }
+  if (!k) { section.hidden = true; return; }
+  const req = state.requisitos[k];
+  const auto = creditosObrigatoriosAuto(k);
+  const base = auto.base;
   section.hidden = false;
 
   const completedRows = state.rows.filter(r => INTEGRALIZA_SIT.includes(r.situacao));
-  let credBct = 0, credCurso = 0, credOl = 0, credOutros = 0;
+  let credBase = 0, credCurso = 0, credOl = 0, credOutros = 0;
   for (const r of completedRows) {
     const cat = categoriaDetalhada(r.codigo);
-    if (cat === 'OBR_BCT') credBct += r.creditos;
+    if (cat === 'OBR_BASE') credBase += r.creditos;
     else if (cat === 'OBR_CURSO') credCurso += r.creditos;
     else if (cat === 'OL') credOl += r.creditos;
     else credOutros += r.creditos;
   }
   const aprovadosCodigos = new Set(completedRows.map(r => r.codigo));
-  const faltamBct = state.disciplinas.filter(d => d.cursos['BC&T'] === 'OBR' && !aprovadosCodigos.has(d.codigo));
+  const faltamBase = state.disciplinas.filter(d => d.cursos[base] === 'OBR' && !aprovadosCodigos.has(d.codigo));
   const faltamCurso = state.disciplinas.filter(d => d.cursos[k] === 'OBR' && !aprovadosCodigos.has(d.codigo));
 
   const cards = [
-    { title: 'Obrigatórias BC&T', feito: credBct, total: req.obr_bct, faltam: faltamBct, cls: '' },
-    { title: 'Obrigatórias do curso', feito: credCurso, total: req.obr_curso, faltam: faltamCurso, cls: '' },
-    { title: 'Opção Limitada', feito: credOl, total: req.ol, cls: 'is-ol' },
-    { title: 'Livres', feito: credOutros, total: req.livre, cls: 'is-livre', nota: credOutros > req.livre ? 'inclui créditos ainda não usados em Obrigatória/OL — pode passar de 100%' : '' },
+    { title: `Obrigatórias ${base}`, feito: credBase, total: req ? req.obr_bct : auto.obr_base, faltam: faltamBase, cls: '' },
+    { title: 'Obrigatórias do curso', feito: credCurso, total: req ? req.obr_curso : auto.obr_curso, faltam: faltamCurso, cls: '' },
   ];
+  if (req) {
+    cards.push({ title: 'Opção Limitada', feito: credOl, total: req.ol, cls: 'is-ol' });
+    cards.push({ title: 'Livres', feito: credOutros, total: req.livre, cls: 'is-livre', nota: credOutros > req.livre ? 'excedente não conta a mais no CPk (a fórmula oficial trava no limite)' : '' });
+  }
   el('progressGrid').innerHTML = cards.map(c => {
     const pctReal = c.total ? (c.feito / c.total) * 100 : 0;
     const pctBar = Math.min(100, pctReal);
@@ -269,6 +319,9 @@ function computeProgresso() {
         ${faltamHtml}
       </div>`;
   }).join('');
+  if (!req) {
+    el('progressGrid').innerHTML += `<p class="field-note" style="grid-column:1/-1">Sem cota de OL/Livre cadastrada pra esse curso — só as Obrigatórias aparecem aqui.</p>`;
+  }
 }
 
 function badge(cat) {
@@ -329,7 +382,18 @@ function fmt(v) { return v === null || v === undefined || isNaN(v) ? '—' : v.t
 
 function updateCoefs() {
   const exigidos = parseFloat(el('creditosExigidos').value) || null;
-  const { CR, CA, CP, denCR } = computeCoefs(state.rows, exigidos);
+  const { CR, CA, denCR } = computeCoefs(state.rows, exigidos);
+  let CP = null, cpFonte = '';
+  const req = state.requisitos[state.cursoSelecionado];
+  if (state.cursoSelecionado && req) {
+    const r = computeCPkOficial(state.rows, state.cursoSelecionado, req);
+    CP = r ? r.CPk : null;
+    cpFonte = 'CPk oficial (Ato Decisório ConsEPE 257)';
+  } else {
+    const base = computeCoefs(state.rows, exigidos);
+    CP = base.CP;
+    cpFonte = '';
+  }
   el('crValue').textContent = fmt(CR);
   el('caValue').textContent = fmt(CA);
   el('cpValue').textContent = CP === null ? '—' : CP.toFixed(4);
@@ -338,7 +402,7 @@ function updateCoefs() {
   const anyEditada = state.rows.some(r => r.simulado);
   el('crRef').textContent = anyEditada ? 'inclui simulação(ões)' : '';
   el('caRef').textContent = anyEditada ? 'inclui simulação(ões)' : '';
-  el('cpRef').textContent = exigidos ? '' : 'escolha um curso ao lado ou informe os créditos exigidos';
+  el('cpRef').textContent = cpFonte || (exigidos ? '' : 'escolha um curso ao lado ou informe os créditos exigidos');
 }
 
 /* ---------------- Upload ---------------- */
